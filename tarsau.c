@@ -100,7 +100,54 @@ void archive_files(int argc, char *argv[]) {
 
     printf("Basarili: %d adet metin dosyasi (Toplam %lld byte) '%s' icine arsivlenecek.\n", file_count, total_size, output_filename);
     
-    // TODO: Organizasyon bolumunu ve dosya iceriklerini .sau dosyasina yaz
+    // --- YENI EKLENEN KISIM: ARSIV DOSYASINI YAZMA ---
+    
+    FILE *out_file = fopen(output_filename, "w");
+    if (!out_file) {
+        fprintf(stderr, "Hata: Arsiv dosyasi olusturulamadi.\n");
+        exit(1);
+    }
+
+    // 1. Organizasyon (Baslik) kismini hazirla
+    char header_buffer[8192] = {0}; // 32 dosya metadata'si icin fazlasiyla yeterli
+    
+    for (int i = 0; i < file_count; i++) {
+        struct stat st;
+        stat(input_files[i], &st);
+        
+        char temp_record[256];
+        // Dosya adi, izinler (octal formatta), ve boyut
+        // st_mode & 0777 islemi sadece okuma/yazma/calistirma izinlerini alir (orn: 644)
+        sprintf(temp_record, "|%s,%o,%ld|", input_files[i], st.st_mode & 0777, (long)st.st_size);
+        strcat(header_buffer, temp_record);
+    }
+
+    // 2. Basligin toplam boyutunu hesapla ve ilk 10 byte'a yaz
+    long header_size = strlen(header_buffer);
+    // %010ld formati, sayiyi 10 karaktere tamamlayacak sekilde basina sifir ekler
+    fprintf(out_file, "%010ld", header_size);
+
+    // 3. Organizasyon metnini (metadata) dosyaya yaz
+    fprintf(out_file, "%s", header_buffer);
+
+    // 4. Dosya iceriklerini (Payload) araliksiz olarak sonuna ekle
+    for (int i = 0; i < file_count; i++) {
+        FILE *in_file = fopen(input_files[i], "r");
+        if (!in_file) {
+            fprintf(stderr, "Uyari: %s dosyasi okunurken atlandi.\n", input_files[i]);
+            continue;
+        }
+
+        char buffer[4096];
+        size_t bytes_read;
+        while ((bytes_read = fread(buffer, 1, sizeof(buffer), in_file)) > 0) {
+            fwrite(buffer, 1, bytes_read, out_file);
+        }
+        fclose(in_file);
+    }
+
+    fclose(out_file);
+    printf("Arsivleme tamamlandi. Cikti dosyasi: %s\n", output_filename);
 }
 
 void extract_archive(int argc, char *argv[]) {
