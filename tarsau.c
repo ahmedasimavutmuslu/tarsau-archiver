@@ -151,5 +151,107 @@ void archive_files(int argc, char *argv[]) {
 }
 
 void extract_archive(int argc, char *argv[]) {
-    printf("Cikartma islemi hazirlaniyor...\n");
+    if (argc < 3) {
+        fprintf(stderr, "Hata: Cikartilacak arsiv dosyasi belirtilmedi.\n");
+        exit(1);
+    }
+
+    char *archive_name = argv[2];
+    char *target_dir = (argc > 3) ? argv[3] : NULL;
+
+    FILE *arch_file = fopen(archive_name, "r");
+    if (!arch_file) {
+        printf("Arşiv dosyası uygunsuz veya bozuk!\n");
+        exit(0);
+    }
+
+    // Hedef dizin belirtilmisse kontrol et ve olustur
+    if (target_dir) {
+        struct stat st = {0};
+        if (stat(target_dir, &st) == -1) {
+            // Dizin yoksa olustur (varsayilan izinler 0777)
+            if (mkdir(target_dir, 0777) != 0) {
+                fprintf(stderr, "Hata: '%s' dizini olusturulamadi.\n", target_dir);
+                exit(1);
+            }
+        }
+    }
+
+    // 1. Ilk 10 byte'i oku (Organizasyon bolumu boyutu)
+    char size_buf[11] = {0};
+    if (fread(size_buf, 1, 10, arch_file) != 10) {
+        printf("Arşiv dosyası uygunsuz veya bozuk!\n");
+        fclose(arch_file);
+        exit(0);
+    }
+
+    long header_size = atol(size_buf);
+    if (header_size <= 0) {
+        printf("Arşiv dosyası uygunsuz veya bozuk!\n");
+        fclose(arch_file);
+        exit(0);
+    }
+
+    // 2. Organizasyon (Metadata) bolumunu oku
+    char *header = malloc(header_size + 1);
+    fread(header, 1, header_size, arch_file);
+    header[header_size] = '\0';
+
+    // 3. Metadata'yi parse et ve dosyalari cikart
+    // strsep veya sscanf kullanarak |dosya,izin,boyut| formatini ayiriyoruz
+    char *ptr = header;
+    while (*ptr != '\0') {
+        if (*ptr == '|') {
+            ptr++;
+            char filename[256] = {0};
+            int permissions;
+            long filesize;
+
+            // Virgul ve pipe karakterlerine gore oku
+            if (sscanf(ptr, "%255[^,],%o,%ld|", filename, &permissions, &filesize) == 3) {
+                
+                // Tam dosya yolunu hazirla (dizin varsa)
+                char full_path[512] = {0};
+                if (target_dir) {
+                    sprintf(full_path, "%s/%s", target_dir, filename);
+                } else {
+                    strcpy(full_path, filename);
+                }
+
+                // Dosya icerigini oku ve yaz
+                FILE *out_file = fopen(full_path, "w");
+                if (out_file) {
+                    char *file_data = malloc(filesize);
+                    
+                    // fread ile siradaki veriyi oku, fwrite ile disari aktar
+                    fread(file_data, 1, filesize, arch_file);
+                    fwrite(file_data, 1, filesize, out_file);
+                    
+                    fclose(out_file);
+                    free(file_data);
+
+                    // Orjinal izinleri geri yukle
+                    chmod(full_path, permissions);
+                }
+                
+                // Pointer'i bir sonraki kayda tasi
+                ptr = strchr(ptr, '|');
+                if (ptr) ptr++; 
+            } else {
+                break; // Format bozuksa donguyu kir
+            }
+        } else {
+            ptr++;
+        }
+    }
+
+    free(header);
+    fclose(arch_file);
+    
+    // Proje dokumanindaki ornek ciktiya uygun basari mesaji
+    if (target_dir) {
+        printf("%s dizininde dosyalar acildi.\n", target_dir);
+    } else {
+        printf("Dosyalar bulundugunuz dizinde acildi.\n");
+    }
 }
